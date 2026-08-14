@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bottle Sort</title>
+<style>
+  :root {
+    --bg:        #17181c;
+    --surface:   #232429;
+    --panel:     #2a2b31;
+    --rim:       rgba(255,255,255,0.12);
+    --ink:       #f4f3f0;
+    --ink-2:     #b7b6c0;
+    --ink-muted: #83828c;
+    --accent:    #5b9dee;
+    --good:      #2fbf6a;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    overflow-x: hidden;
+  }
+  body {
+    display: flex;
+    align-items: flex-start;
+    justify-content: center;
+    padding: 32px 16px 56px;
+    position: relative;
+  }
+
+  /* soft drifting color blobs behind everything */
+  .blob {
+    position: fixed;
+    z-index: -1;
+    border-radius: 50%;
+    filter: blur(70px);
+    opacity: 0.32;
+    pointer-events: none;
+  }
+  .blob-1 { width: 46vw; height: 46vw; max-width: 520px; max-height: 520px; background: #3987e5; top: -14vw; left: -10vw; animation: drift1 26s ease-in-out infinite; }
+  .blob-2 { width: 40vw; height: 40vw; max-width: 460px; max-height: 460px; background: #d5567e; bottom: -16vw; right: -10vw; animation: drift2 32s ease-in-out infinite; }
+  .blob-3 { width: 30vw; height: 30vw; max-width: 340px; max-height: 340px; background: #cf9f22; top: 40%; left: 60%; animation: drift3 22s ease-in-out infinite; opacity: 0.2; }
+  @keyframes drift1 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(4vw,3vw) scale(1.08); } }
+  @keyframes drift2 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(-3vw,-4vw) scale(1.1); } }
+  @keyframes drift3 { 0%,100% { transform: translate(0,0) scale(1); } 50% { transform: translate(-2vw,3vw) scale(0.92); } }
+
+  .wrap {
+    width: 100%;
+    max-width: 780px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+  h1 {
+    margin: 0;
+    font-size: 32px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    background: linear-gradient(90deg, #6ba6ee 0%, #e186a8 55%, #e6b93f 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+    animation: title-in 0.55s cubic-bezier(.34,1.56,.64,1) both;
+  }
+  @keyframes title-in {
+    from { transform: translateY(-8px) scale(0.94); opacity: 0; }
+    to   { transform: translateY(0) scale(1); opacity: 1; }
+  }
+  .rules {
+    margin: 0;
+    text-align: center;
+    font-size: 13.5px;
+    color: var(--ink-2);
+    max-width: 480px;
+    line-height: 1.5;
+  }
+
+  .hud {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    flex-wrap: wrap;
+  }
+  .hud-chip {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    background: var(--panel);
+    border: 1px solid var(--rim);
+    border-radius: 100px;
+    padding: 6px 14px;
+    font-size: 13px;
+    color: var(--ink-2);
+  }
+  .hud-chip b { color: var(--ink); font-variant-numeric: tabular-nums; font-weight: 700; }
+  .dot-row { display: flex; gap: 3px; }
+  .dot-row span { width: 8px; height: 8px; border-radius: 50%; display: block; }
+
+  .btn {
+    background: var(--panel);
+    color: var(--ink);
+    border: 1px solid var(--rim);
+    border-radius: 100px;
+    padding: 8px 18px;
+    font-size: 13.5px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    transition: transform 0.12s ease, background 0.12s ease, box-shadow 0.12s ease;
+  }
+  .btn:hover:not(:disabled) { background: #34353c; transform: translateY(-2px); box-shadow: 0 6px 14px rgba(0,0,0,0.3); }
+  .btn:active:not(:disabled) { transform: translateY(0) scale(0.95); }
+  .btn:disabled { opacity: 0.4; cursor: default; }
+  .btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .btn.primary { background: linear-gradient(135deg, #6ba6ee, #5b9dee); color: #0d1420; border-color: transparent; }
+  .btn.primary:hover:not(:disabled) { filter: brightness(1.08); }
+  .link-btn {
+    background: none;
+    border: none;
+    color: var(--ink-muted);
+    font-size: 12px;
+    text-decoration: underline;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .link-btn:hover { color: var(--ink-2); }
+
+  #tubes {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: flex-end;
+    gap: 14px 18px;
+    padding: 20px 8px 4px;
+    max-width: 100%;
+  }
+
+  .tube {
+    width: 66px;
+    height: 152px;
+    cursor: pointer;
+    position: relative;
+    transition: transform 0.18s cubic-bezier(.34,1.56,.64,1);
+    filter: drop-shadow(0 6px 10px rgba(0,0,0,0.35));
+  }
+  .tube svg { width: 100%; height: 100%; display: block; overflow: visible; }
+  .tube.locked { cursor: default; }
+  .tube:not(.selected):not(.locked):hover { transform: translateY(-5px) rotate(-3deg); }
+  .tube.selected {
+    transform: translateY(-16px);
+    filter: drop-shadow(0 14px 18px rgba(0,0,0,0.45)) drop-shadow(0 0 0 2px var(--accent));
+  }
+  .tube.shake { animation: shake 0.32s ease; }
+  @keyframes shake {
+    0%, 100% { transform: translateX(0); }
+    20% { transform: translateX(-6px); }
+    40% { transform: translateX(5px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(3px); }
+  }
+  .tube.celebrate { animation: celebrate 0.5s cubic-bezier(.34,1.56,.64,1); }
+  @keyframes celebrate {
+    0%   { transform: scale(1) translateY(0); }
+    35%  { transform: scale(1.16) translateY(-10px) rotate(-4deg); }
+    65%  { transform: scale(0.97) translateY(0) rotate(3deg); }
+    100% { transform: scale(1) translateY(0) rotate(0); }
+  }
+  .tube:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
+
+  .sand-layer { animation: settle 0.22s ease; transform-origin: bottom center; }
+  @keyframes settle {
+    from { transform: scaleY(0.82) translateY(6px); opacity: 0.5; }
+    to   { transform: scaleY(1) translateY(0); opacity: 1; }
+  }
+
+  .lock-badge {
+    position: absolute;
+    top: 2px;
+    right: -6px;
+    width: 20px;
+    height: 20px;
+    border-radius: 50%;
+    background: var(--good);
+    color: #0d1420;
+    border: 2px solid var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  /* pour particles: sand flying from bottle to bottle */
+  .pour-grain {
+    position: fixed;
+    z-index: 20;
+    border-radius: 50%;
+    pointer-events: none;
+  }
+
+  /* confetti */
+  .confetti-layer {
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 30;
+    overflow: hidden;
+  }
+  .confetti-piece {
+    position: absolute;
+    top: -20px;
+    border-radius: 2px;
+    animation: confetti-fall linear forwards;
+  }
+  @keyframes confetti-fall {
+    from { transform: translateY(0) rotate(0deg); opacity: 1; }
+    to   { transform: translateY(105vh) rotate(600deg); opacity: 0.85; }
+  }
+
+  #win-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(8,9,12,0.68);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10;
+  }
+  #win-overlay[hidden] { display: none; }
+  .win-card {
+    background: var(--surface);
+    border: 1px solid var(--rim);
+    border-radius: 16px;
+    padding: 30px 34px;
+    text-align: center;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    max-width: 320px;
+    animation: win-pop 0.4s cubic-bezier(.34,1.56,.64,1);
+  }
+  @keyframes win-pop {
+    from { transform: scale(0.85); opacity: 0; }
+    to   { transform: scale(1); opacity: 1; }
+  }
+  .win-card h2 { margin: 0; font-size: 23px; }
+  .win-card p { margin: 0; color: var(--ink-2); font-size: 14px; }
+  .win-actions { display: flex; gap: 10px; margin-top: 4px; }
+
+  footer {
+    font-size: 11.5px;
+    color: var(--ink-muted);
+    text-align: center;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .sand-layer, .tube, .tube.shake, .tube.celebrate, h1, .win-card, .blob, .btn {
+      animation: none !important;
+      transition: none !important;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="blob blob-1"></div>
+<div class="blob blob-2"></div>
+<div class="blob blob-3"></div>
+
+<div class="wrap">
+  <h1>Bottle Sort</h1>
+  <p class="rules">Click a bottle to select it, click another to pour into it. You can't pour into a full bottle. A bottle locks once it's filled with one color of sand &mdash; keep the empty bottles free as workspace.</p>
+
+  <div class="hud">
+    <span class="hud-chip">Level <b id="level-num">1</b></span>
+    <span class="hud-chip">Moves <b id="move-count">0</b></span>
+    <span class="hud-chip"><b id="colors-count">7</b> colors <span class="dot-row" id="dot-row"></span> &middot; <b id="empty-count">5</b> empty</span>
+    <button class="btn" id="undo-btn" type="button">Undo</button>
+    <button class="btn" id="new-btn" type="button">🔀 Reshuffle</button>
+  </div>
+
+  <div id="tubes"></div>
+
+  <button class="link-btn" id="reset-progress-btn" type="button">Restart from level 1</button>
+  <footer>Sand settles as you pour. Each level adds a color and shrinks your workspace.</footer>
+</div>
+
+<div id="win-overlay" hidden>
+  <div class="win-card">
+    <h2 id="win-title">Level cleared! 🎉</h2>
+    <p id="win-detail"></p>
+    <div class="win-actions">
+      <button class="btn" id="retry-btn" type="button">Retry</button>
+      <button class="btn primary" id="next-btn" type="button">Next level ▶</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  var TOTAL_BOTTLES = 12;
+  var STORAGE_KEY = 'bottleSortLevel';
+  var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // Ten distinct hue+glyph identities — color alone is not required to tell
+  // them apart, since a unique glyph rides on every grain of sand.
+  var PALETTE = [
+    { id: 'c0', hex: '#3987e5', glyph: 'dot' },
+    { id: 'c1', hex: '#d9772e', glyph: 'triup' },
+    { id: 'c2', hex: '#1fae74', glyph: 'square' },
+    { id: 'c3', hex: '#cf9f22', glyph: 'diamond' },
+    { id: 'c4', hex: '#d5567e', glyph: 'spark' },
+    { id: 'c5', hex: '#8b6fe0', glyph: 'hex' },
+    { id: 'c6', hex: '#e2574c', glyph: 'plus' },
+    { id: 'c7', hex: '#2bb0b0', glyph: 'tridown' },
+    { id: 'c8', hex: '#9aa62e', glyph: 'penta' },
+    { id: 'c9', hex: '#b9793f', glyph: 'rings' }
+  ];
+
+  var GLYPHS = {
+    dot:     '<circle cx="9" cy="9" r="5" fill="white" opacity="0.85"/>',
+    triup:   '<polygon points="9,3 15.5,15 2.5,15" fill="none" stroke="white" stroke-width="2" stroke-linejoin="round" opacity="0.9"/>',
+    square:  '<rect x="4" y="4" width="10" height="10" fill="none" stroke="white" stroke-width="2" opacity="0.9"/>',
+    diamond: '<polygon points="9,2.5 15.5,9 9,15.5 2.5,9" fill="none" stroke="white" stroke-width="2" stroke-linejoin="round" opacity="0.9"/>',
+    spark:   '<path d="M9,2 L10.8,7.2 L16,9 L10.8,10.8 L9,16 L7.2,10.8 L2,9 L7.2,7.2 Z" fill="none" stroke="white" stroke-width="1.5" stroke-linejoin="round" opacity="0.9"/>',
+    hex:     '<polygon points="15.5,9 12.25,14.6 5.75,14.6 2.5,9 5.75,3.4 12.25,3.4" fill="none" stroke="white" stroke-width="2" stroke-linejoin="round" opacity="0.9"/>',
+    plus:    '<path d="M7.5,3 h3 v4.5 h4.5 v3 h-4.5 v4.5 h-3 v-4.5 h-4.5 v-3 h4.5 z" fill="white" opacity="0.85"/>',
+    tridown: '<polygon points="2.5,4 15.5,4 9,16" fill="none" stroke="white" stroke-width="2" stroke-linejoin="round" opacity="0.9"/>',
+    penta:   '<polygon points="9,2.2 15.2,6.8 12.8,14.2 5.2,14.2 2.8,6.8" fill="none" stroke="white" stroke-width="2" stroke-linejoin="round" opacity="0.9"/>',
+    rings:   '<circle cx="9" cy="9" r="6.2" fill="none" stroke="white" stroke-width="1.5" opacity="0.9"/><circle cx="9" cy="9" r="3" fill="none" stroke="white" stroke-width="1.5" opacity="0.9"/>'
+  };
+
+  var COLOR_BY_ID = {};
+  PALETTE.forEach(function (c) { COLOR_BY_ID[c.id] = c; });
+
+  // ---------------- Level design ----------------
+  // Bottle count is fixed at 12 and the empty-bottle floor is fixed at 2 —
+  // with only 0-1 truly empty bottles the puzzle becomes unsolvable almost
+  // all the time (there's nowhere to park a color while digging out another),
+  // so difficulty instead ramps fast through colors, then through bottle
+  // capacity once colors hit the ceiling.
+  function levelConfig(level) {
+    var numColors = Math.min(10, level + 6);
+    var capacity = 4 + Math.max(0, level - 4);
+    return {
+      numColors: numColors,
+      capacity: capacity,
+      numEmpty: TOTAL_BOTTLES - numColors
+    };
+  }
+
+  var level = 1;
+  try {
+    var saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
+    if (saved > 0) level = saved;
+  } catch (e) { /* localStorage unavailable — start at level 1 */ }
+
+  var CAPACITY = 4;
+  var COLORS = [];
+  var tubes = [];
+  var history = [];
+  var selected = null;
+  var moveCount = 0;
+  var won = false;
+  var animating = false;
+  var lockedBefore = {};
+
+  var tubesEl = document.getElementById('tubes');
+  var levelNumEl = document.getElementById('level-num');
+  var moveCountEl = document.getElementById('move-count');
+  var colorsCountEl = document.getElementById('colors-count');
+  var emptyCountEl = document.getElementById('empty-count');
+  var dotRowEl = document.getElementById('dot-row');
+  var undoBtn = document.getElementById('undo-btn');
+  var newBtn = document.getElementById('new-btn');
+  var resetProgressBtn = document.getElementById('reset-progress-btn');
+  var winOverlay = document.getElementById('win-overlay');
+  var winTitle = document.getElementById('win-title');
+  var winDetail = document.getElementById('win-detail');
+  var retryBtn = document.getElementById('retry-btn');
+  var nextBtn = document.getElementById('next-btn');
+
+  function saveLevel() {
+    try { localStorage.setItem(STORAGE_KEY, String(level)); } catch (e) { /* ignore */ }
+  }
+
+  // ---------------- Core game rules ----------------
+  function shuffle(arr) {
+    for (var i = arr.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var t = arr[i]; arr[i] = arr[j]; arr[j] = t;
+    }
+    return arr;
+  }
+
+  function topColor(tube) { return tube.length ? tube[tube.length - 1] : null; }
+
+  function isLocked(tube, capacity) {
+    return tube.length === capacity && tube.every(function (c) { return c === tube[0]; });
+  }
+
+  function topRunLength(tube) {
+    if (!tube.length) return 0;
+    var color = tube[tube.length - 1], n = 0;
+    for (var i = tube.length - 1; i >= 0 && tube[i] === color; i--) n++;
+    return n;
+  }
+
+  function canPour(from, to, capacity) {
+    if (!from.length) return false;
+    if (isLocked(from, capacity)) return false;
+    if (to.length >= capacity) return false;
+    if (to.length === 0) return true;
+    return topColor(to) === topColor(from);
+  }
+
+  function pour(from, to, capacity) {
+    var color = topColor(from);
+    var space = capacity - to.length;
+    var moved = 0;
+    while (moved < space && from.length && topColor(from) === color) {
+      to.push(from.pop());
+      moved++;
+    }
+  }
+
+  function isWin(tubeSet, capacity) {
+    return tubeSet.every(function (t) { return t.length === 0 || isLocked(t, capacity); });
+  }
+
+  function stateKey(tubeSet) {
+    return tubeSet.map(function (t) { return t.join(''); }).sort().join('|');
+  }
+
+  // Bounded DFS used only at deal-time to guarantee the shuffle is solvable.
+  function solvable(tubeSet, capacity, maxNodes, maxMs) {
+    var seen = {};
+    seen[stateKey(tubeSet)] = true;
+    var stack = [tubeSet];
+    var nodes = 0;
+    var t0 = Date.now();
+    while (stack.length) {
+      if (nodes >= maxNodes || Date.now() - t0 > maxMs) return false;
+      var cur = stack.pop();
+      nodes++;
+      if (isWin(cur, capacity)) return true;
+      for (var i = 0; i < cur.length; i++) {
+        if (!cur[i].length || isLocked(cur[i], capacity)) continue;
+        for (var j = 0; j < cur.length; j++) {
+          if (i === j) continue;
+          if (canPour(cur[i], cur[j], capacity)) {
+            var nt = cur.map(function (t) { return t.slice(); });
+            pour(nt[i], nt[j], capacity);
+            var k = stateKey(nt);
+            if (!seen[k]) { seen[k] = true; stack.push(nt); }
+          }
+        }
+      }
+    }
+    return false;
+  }
+
+  function dealLevel(cfg) {
+    var attempts = 0;
+    var candidate;
+    do {
+      var units = [];
+      for (var c = 0; c < cfg.numColors; c++) {
+        for (var i = 0; i < cfg.capacity; i++) units.push(PALETTE[c].id);
+      }
+      shuffle(units);
+      candidate = [];
+      for (var t = 0; t < cfg.numColors; t++) candidate.push(units.splice(0, cfg.capacity));
+      for (var e = 0; e < cfg.numEmpty; e++) candidate.push([]);
+      attempts++;
+    } while (attempts < 30 && !solvable(candidate, cfg.capacity, 200000, 150));
+    return candidate;
+  }
+
+  function newGame() {
+    var cfg = levelConfig(level);
+    CAPACITY = cfg.capacity;
+    COLORS = PALETTE.slice(0, cfg.numColors).map(function (c) { return c.id; });
+    tubes = dealLevel(cfg);
+
+    history = [];
+    selected = null;
+    moveCount = 0;
+    won = false;
+    animating = false;
+    winOverlay.hidden = true;
+    lockedBefore = {};
+
+    levelNumEl.textContent = level;
+    colorsCountEl.textContent = cfg.numColors;
+    emptyCountEl.textContent = cfg.numEmpty;
+    dotRowEl.innerHTML = COLORS.map(function (id) {
+      return '<span style="background:' + COLOR_BY_ID[id].hex + '"></span>';
+    }).join('');
+    render();
+  }
+
+  function snapshot() { return tubes.map(function (t) { return t.slice(); }); }
+
+  // ---------------- Bottle rendering (SVG) ----------------
+  var VB_W = 100, VB_H = 230;
+  var NECK_L = 38, NECK_R = 62, NECK_TOP = 8, NECK_BOTTOM = 46;
+  var BODY_L = 8, BODY_R = 92, SHOULDER_B = 70, BODY_B = 214, BOTTOM_R = 18;
+
+  var BOTTLE_PATH =
+    'M' + NECK_L + ',' + NECK_TOP +
+    ' L' + NECK_R + ',' + NECK_TOP +
+    ' L' + NECK_R + ',' + NECK_BOTTOM +
+    ' C' + (NECK_R + 14) + ',' + (NECK_BOTTOM + 6) + ' ' + BODY_R + ',' + (SHOULDER_B - 14) + ' ' + BODY_R + ',' + SHOULDER_B +
+    ' L' + BODY_R + ',' + (BODY_B - BOTTOM_R) +
+    ' Q' + BODY_R + ',' + BODY_B + ' ' + (BODY_R - BOTTOM_R) + ',' + BODY_B +
+    ' L' + (BODY_L + BOTTOM_R) + ',' + BODY_B +
+    ' Q' + BODY_L + ',' + BODY_B + ' ' + BODY_L + ',' + (BODY_B - BOTTOM_R) +
+    ' L' + BODY_L + ',' + SHOULDER_B +
+    ' C' + BODY_L + ',' + (SHOULDER_B - 14) + ' ' + (NECK_L - 14) + ',' + (NECK_BOTTOM + 6) + ' ' + NECK_L + ',' + NECK_BOTTOM +
+    ' Z';
+
+  function seededRandom(n) {
+    var x = Math.sin(n * 12.9898) * 43758.5453;
+    return x - Math.floor(x);
+  }
+
+  function layerPath(yTop, yBottom, seed, amp) {
+    var midX = (BODY_L + BODY_R) / 2;
+    var offset = (seededRandom(seed) * 2 - 1) * amp;
+    var ctrlY = yTop + offset;
+    return 'M' + BODY_L + ',' + yBottom +
+      ' L' + BODY_L + ',' + yTop +
+      ' Q' + midX + ',' + ctrlY + ' ' + BODY_R + ',' + yTop +
+      ' L' + BODY_R + ',' + yBottom + ' Z';
+  }
+
+  function bottleSVG(tube, idx, capacity) {
+    var bodyHeight = BODY_B - SHOULDER_B;
+    var unit = bodyHeight / capacity;
+    var amp = Math.min(5, unit * 0.28);
+
+    var layers = '';
+    tube.forEach(function (colorId, k) {
+      var yBottom = BODY_B - k * unit;
+      var yTop = BODY_B - (k + 1) * unit;
+      var seed = idx * 977 + k * 131 + parseInt(colorId.slice(1), 10) * 37;
+      var d = layerPath(yTop, yBottom, seed, amp);
+      var color = COLOR_BY_ID[colorId];
+      var cx = (BODY_L + BODY_R) / 2, cy = (yTop + yBottom) / 2;
+      layers +=
+        '<g class="sand-layer">' +
+        '<path d="' + d + '" fill="' + color.hex + '"/>' +
+        '<path d="' + d + '" fill="url(#grain)"/>' +
+        '<g transform="translate(' + (cx - 9) + ',' + (cy - 9) + ')">' + GLYPHS[color.glyph] + '</g>' +
+        '</g>';
+    });
+
+    return (
+      '<svg viewBox="0 0 ' + VB_W + ' ' + VB_H + '">' +
+      '<defs>' +
+      '<clipPath id="clip' + idx + '"><path d="' + BOTTLE_PATH + '"/></clipPath>' +
+      '</defs>' +
+      '<rect x="' + (NECK_L - 5) + '" y="' + (NECK_TOP - 12) + '" width="' + (NECK_R - NECK_L + 10) + '" height="16" rx="4" fill="#8a6a45" stroke="rgba(0,0,0,0.35)" stroke-width="1"/>' +
+      '<g clip-path="url(#clip' + idx + ')">' +
+      '<path d="' + BOTTLE_PATH + '" fill="rgba(255,255,255,0.05)"/>' +
+      layers +
+      '<rect x="0" y="0" width="24" height="' + VB_H + '" fill="url(#sheen)"/>' +
+      '</g>' +
+      '<path d="' + BOTTLE_PATH + '" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="2"/>' +
+      '</svg>'
+    );
+  }
+
+  var DEFS_ONCE =
+    '<svg width="0" height="0" style="position:absolute">' +
+    '<defs>' +
+    '<pattern id="grain" width="6" height="6" patternUnits="userSpaceOnUse">' +
+    '<circle cx="1" cy="1" r="0.6" fill="black" opacity="0.16"/>' +
+    '<circle cx="4" cy="3" r="0.5" fill="white" opacity="0.14"/>' +
+    '<circle cx="2.5" cy="4.5" r="0.4" fill="black" opacity="0.1"/>' +
+    '<circle cx="5" cy="5.5" r="0.45" fill="white" opacity="0.09"/>' +
+    '</pattern>' +
+    '<linearGradient id="sheen" x1="0" x2="1" y1="0" y2="0">' +
+    '<stop offset="0%" stop-color="white" stop-opacity="0.22"/>' +
+    '<stop offset="60%" stop-color="white" stop-opacity="0.02"/>' +
+    '<stop offset="100%" stop-color="white" stop-opacity="0"/>' +
+    '</linearGradient>' +
+    '</defs>' +
+    '</svg>';
+
+  // ---------------- Render ----------------
+  function render() {
+    tubesEl.innerHTML = DEFS_ONCE;
+    tubes.forEach(function (tube, idx) {
+      var locked = isLocked(tube, CAPACITY);
+      var justLocked = locked && !lockedBefore[idx];
+      lockedBefore[idx] = locked;
+
+      var el = document.createElement('div');
+      el.className = 'tube' + (locked ? ' locked' : '') + (selected === idx ? ' selected' : '') + (justLocked && !reducedMotion ? ' celebrate' : '');
+      el.setAttribute('tabindex', '0');
+      el.setAttribute('role', 'button');
+      el.setAttribute('aria-label', 'Bottle ' + (idx + 1) + (tube.length ? ', ' + tube.length + ' of ' + CAPACITY + ' filled' : ', empty'));
+      el.innerHTML = bottleSVG(tube, idx, CAPACITY);
+
+      if (locked) {
+        var badge = document.createElement('div');
+        badge.className = 'lock-badge';
+        badge.textContent = '✓';
+        el.appendChild(badge);
+      }
+
+      el.addEventListener('click', function () { onTubeClick(idx); });
+      el.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onTubeClick(idx); }
+      });
+
+      tubesEl.appendChild(el);
+    });
+
+    moveCountEl.textContent = moveCount;
+    undoBtn.disabled = history.length === 0;
+  }
+
+  function shakeTube(idx) {
+    var el = tubesEl.children[idx + 1]; // +1 to skip the defs <svg>
+    if (!el) return;
+    el.classList.add('shake');
+    setTimeout(function () { el.classList.remove('shake'); }, 320);
+  }
+
+  // ---------------- Fun stuff: pour particles & confetti ----------------
+  function spawnPourGrains(fromIdx, toIdx, colorHex, count, onDone) {
+    var fromEl = tubesEl.children[fromIdx + 1];
+    var toEl = tubesEl.children[toIdx + 1];
+    if (reducedMotion || !fromEl || !toEl || !window.matchMedia) { onDone(); return; }
+
+    var fromRect = fromEl.getBoundingClientRect();
+    var toRect = toEl.getBoundingClientRect();
+    var startX = fromRect.left + fromRect.width / 2;
+    var startY = fromRect.top + fromRect.height * 0.35;
+    var endX = toRect.left + toRect.width / 2;
+    var endY = toRect.top + toRect.height * 0.55;
+
+    var n = Math.min(count, 6);
+    var finished = 0;
+    for (var i = 0; i < n; i++) {
+      (function (i) {
+        var grain = document.createElement('div');
+        grain.className = 'pour-grain';
+        var size = 5 + Math.random() * 3;
+        grain.style.width = size + 'px';
+        grain.style.height = size + 'px';
+        grain.style.background = colorHex;
+        grain.style.left = startX + 'px';
+        grain.style.top = startY + 'px';
+        document.body.appendChild(grain);
+
+        var jitterX = (Math.random() - 0.5) * 16;
+        var midX = (startX + endX) / 2 + jitterX;
+        var midY = Math.min(startY, endY) - 26 - Math.random() * 12;
+
+        var anim = grain.animate([
+          { transform: 'translate(0,0)', offset: 0 },
+          { transform: 'translate(' + (midX - startX) + 'px,' + (midY - startY) + 'px)', offset: 0.5 },
+          { transform: 'translate(' + (endX - startX) + 'px,' + (endY - startY) + 'px)', offset: 1 }
+        ], { duration: 260 + Math.random() * 80, delay: i * 22, easing: 'ease-in', fill: 'forwards' });
+
+        anim.onfinish = function () {
+          grain.remove();
+          finished++;
+          if (finished === n) onDone();
+        };
+      })(i);
+    }
+    if (n === 0) onDone();
+  }
+
+  function spawnConfetti() {
+    if (reducedMotion) return;
+    var layer = document.createElement('div');
+    layer.className = 'confetti-layer';
+    document.body.appendChild(layer);
+    var colors = PALETTE.map(function (c) { return c.hex; });
+    var count = 60;
+    for (var i = 0; i < count; i++) {
+      var piece = document.createElement('div');
+      piece.className = 'confetti-piece';
+      var w = 5 + Math.random() * 5, h = 8 + Math.random() * 6;
+      piece.style.width = w + 'px';
+      piece.style.height = h + 'px';
+      piece.style.left = (Math.random() * 100) + 'vw';
+      piece.style.background = colors[i % colors.length];
+      var duration = 1800 + Math.random() * 1400;
+      piece.style.animationDuration = duration + 'ms';
+      piece.style.animationDelay = (Math.random() * 300) + 'ms';
+      layer.appendChild(piece);
+    }
+    setTimeout(function () { layer.remove(); }, 3600);
+  }
+
+  // ---------------- Interaction ----------------
+  function finishPour(fromIdx, toIdx) {
+    history.push(snapshot());
+    pour(tubes[fromIdx], tubes[toIdx], CAPACITY);
+    moveCount++;
+    selected = null;
+    animating = false;
+    render();
+    if (isWin(tubes, CAPACITY)) {
+      won = true;
+      winTitle.textContent = 'Level ' + level + ' cleared! \u{1F389}';
+      winDetail.textContent = 'Sorted in ' + moveCount + ' move' + (moveCount === 1 ? '' : 's') + '.';
+      winOverlay.hidden = false;
+      spawnConfetti();
+    }
+  }
+
+  function onTubeClick(idx) {
+    if (won || animating) return;
+    var tube = tubes[idx];
+
+    if (selected === null) {
+      if (tube.length && !isLocked(tube, CAPACITY)) selected = idx;
+      else shakeTube(idx);
+      render();
+      return;
+    }
+
+    if (selected === idx) {
+      selected = null;
+      render();
+      return;
+    }
+
+    var fromTube = tubes[selected];
+    var toTube = tube;
+
+    if (canPour(fromTube, toTube, CAPACITY)) {
+      var fromIdx = selected, toIdx = idx;
+      var colorHex = COLOR_BY_ID[topColor(fromTube)].hex;
+      var count = Math.min(topRunLength(fromTube), CAPACITY - toTube.length);
+      animating = true;
+      spawnPourGrains(fromIdx, toIdx, colorHex, count, function () {
+        finishPour(fromIdx, toIdx);
+      });
+      return;
+    }
+
+    if (tube.length && !isLocked(tube, CAPACITY)) {
+      selected = idx;
+    } else {
+      selected = null;
+      shakeTube(idx);
+    }
+    render();
+  }
+
+  undoBtn.addEventListener('click', function () {
+    if (!history.length || animating) return;
+    tubes = history.pop();
+    moveCount = Math.max(0, moveCount - 1);
+    selected = null;
+    won = false;
+    winOverlay.hidden = true;
+    render();
+  });
+
+  newBtn.addEventListener('click', function () { if (!animating) newGame(); });
+  retryBtn.addEventListener('click', function () { newGame(); });
+  nextBtn.addEventListener('click', function () {
+    level++;
+    saveLevel();
+    newGame();
+  });
+  resetProgressBtn.addEventListener('click', function () {
+    if (animating) return;
+    level = 1;
+    saveLevel();
+    newGame();
+  });
+
+  newGame();
+})();
+</script>
+</body>
+</html>

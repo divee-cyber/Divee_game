@@ -131,6 +131,11 @@
     font-family: inherit;
   }
   .link-btn:hover { color: var(--ink-2); }
+  .hint-msg {
+    font-size: 12px;
+    color: var(--ink-muted);
+    min-width: 0;
+  }
 
   #tubes {
     display: flex;
@@ -171,6 +176,11 @@
     35%  { transform: scale(1.16) translateY(-10px) rotate(-4deg); }
     65%  { transform: scale(0.97) translateY(0) rotate(3deg); }
     100% { transform: scale(1) translateY(0) rotate(0); }
+  }
+  .tube.hint-glow { border-radius: 12px; animation: hint-pulse 1.1s ease-in-out infinite; }
+  @keyframes hint-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(91,157,238,0.55); }
+    50%      { box-shadow: 0 0 0 9px rgba(91,157,238,0); }
   }
   .tube:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 8px; }
 
@@ -262,10 +272,13 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .sand-layer, .tube, .tube.shake, .tube.celebrate, h1, .win-card, .blob, .btn {
+    .sand-layer, .tube, .tube.shake, .tube.celebrate, .tube.hint-glow, h1, .win-card, .blob, .btn {
       animation: none !important;
       transition: none !important;
     }
+    /* hint-glow carries real information (which bottles to use), so instead
+       of losing the indicator entirely it becomes a static ring. */
+    .tube.hint-glow { box-shadow: 0 0 0 3px var(--accent); border-radius: 12px; }
   }
 </style>
 </head>
@@ -284,6 +297,8 @@
     <span class="hud-chip"><b id="colors-count">7</b> colors <span class="dot-row" id="dot-row"></span> &middot; <b id="empty-count">5</b> empty</span>
     <button class="btn" id="undo-btn" type="button">Undo</button>
     <button class="btn" id="new-btn" type="button">🔀 Reshuffle</button>
+    <button class="btn" id="hint-btn" type="button">💡 Hint (<span id="hint-count">1</span>)</button>
+    <span class="hint-msg" id="hint-msg"></span>
   </div>
 
   <div id="tubes"></div>
@@ -358,6 +373,15 @@
     };
   }
 
+  // Hints scale with difficulty: colors cap out by level 4 in levelConfig(),
+  // so capacity growth beyond that is the real difficulty axis. Max 3 so a
+  // hint nudges a stuck player without solving the puzzle for them.
+  function hintsForLevel(level) {
+    if (level <= 3) return 1;
+    if (level <= 7) return 2;
+    return 3;
+  }
+
   var level = 1;
   try {
     var saved = parseInt(localStorage.getItem(STORAGE_KEY), 10);
@@ -373,6 +397,9 @@
   var won = false;
   var animating = false;
   var lockedBefore = {};
+  var hintsRemaining = 1;
+  var hintPair = null; // {from, to} while a hint is showing, else null
+  var lastMove = null; // {from, to} of the most recent pour, so hints avoid suggesting an immediate undo
 
   var tubesEl = document.getElementById('tubes');
   var levelNumEl = document.getElementById('level-num');
@@ -388,6 +415,9 @@
   var winDetail = document.getElementById('win-detail');
   var retryBtn = document.getElementById('retry-btn');
   var nextBtn = document.getElementById('next-btn');
+  var hintBtn = document.getElementById('hint-btn');
+  var hintCountEl = document.getElementById('hint-count');
+  var hintMsgEl = document.getElementById('hint-msg');
 
   function saveLevel() {
     try { localStorage.setItem(STORAGE_KEY, String(level)); } catch (e) { /* ignore */ }
@@ -469,6 +499,52 @@
     return false;
   }
 
+  // Same bounded DFS as solvable(), but each frame carries the root move
+  // that led to it, so the first winning path found tells us the very next
+  // move to suggest — no separate path reconstruction needed.
+  // avoidRootMove (optional {from,to}) excludes one specific move as the
+  // FIRST suggestion only (deeper in the search it's unrestricted) — used
+  // to stop back-to-back hints from suggesting "undo what you just did."
+  function findHintMove(tubeSet, capacity, maxNodes, maxMs, avoidRootMove) {
+    var seen = {};
+    seen[stateKey(tubeSet)] = true;
+    var stack = [{ state: tubeSet, rootMove: null }];
+    var nodes = 0;
+    var t0 = Date.now();
+    while (stack.length) {
+      if (nodes >= maxNodes || Date.now() - t0 > maxMs) return null;
+      var cur = stack.pop();
+      nodes++;
+      if (isWin(cur.state, capacity)) return cur.rootMove;
+      for (var i = 0; i < cur.state.length; i++) {
+        if (!cur.state[i].length || isLocked(cur.state[i], capacity)) continue;
+        for (var j = 0; j < cur.state.length; j++) {
+          if (i === j) continue;
+          if (cur.rootMove === null && avoidRootMove && i === avoidRootMove.to && j === avoidRootMove.from) continue;
+          if (canPour(cur.state[i], cur.state[j], capacity)) {
+            var nt = cur.state.map(function (t) { return t.slice(); });
+            pour(nt[i], nt[j], capacity);
+            var k = stateKey(nt);
+            if (!seen[k]) {
+              seen[k] = true;
+              stack.push({ state: nt, rootMove: cur.rootMove || { from: i, to: j } });
+            }
+          }
+        }
+      }
+    }
+    return null;
+  }
+
+  // Tries to avoid suggesting an immediate reversal of the last move played;
+  // falls back to an unrestricted search so a hint is still given whenever
+  // the puzzle is solvable, even if undoing really is the only way forward.
+  function findHintMovePreferringForward(tubeSet, capacity, maxNodes, maxMs, lastMove) {
+    var move = findHintMove(tubeSet, capacity, maxNodes, maxMs, lastMove);
+    if (move) return move;
+    return findHintMove(tubeSet, capacity, maxNodes, maxMs, null);
+  }
+
   function dealLevel(cfg) {
     var attempts = 0;
     var candidate;
@@ -499,6 +575,10 @@
     animating = false;
     winOverlay.hidden = true;
     lockedBefore = {};
+    hintsRemaining = hintsForLevel(level);
+    hintPair = null;
+    lastMove = null;
+    hintMsgEl.textContent = '';
 
     levelNumEl.textContent = level;
     colorsCountEl.textContent = cfg.numColors;
@@ -506,7 +586,13 @@
     dotRowEl.innerHTML = COLORS.map(function (id) {
       return '<span style="background:' + COLOR_BY_ID[id].hex + '"></span>';
     }).join('');
+    updateHintUI();
     render();
+  }
+
+  function updateHintUI() {
+    hintCountEl.textContent = hintsRemaining;
+    hintBtn.disabled = hintsRemaining <= 0 || animating || won;
   }
 
   function snapshot() { return tubes.map(function (t) { return t.slice(); }); }
@@ -606,8 +692,9 @@
       var justLocked = locked && !lockedBefore[idx];
       lockedBefore[idx] = locked;
 
+      var isHinted = !!hintPair && (idx === hintPair.from || idx === hintPair.to);
       var el = document.createElement('div');
-      el.className = 'tube' + (locked ? ' locked' : '') + (selected === idx ? ' selected' : '') + (justLocked && !reducedMotion ? ' celebrate' : '');
+      el.className = 'tube' + (locked ? ' locked' : '') + (selected === idx ? ' selected' : '') + (justLocked && !reducedMotion ? ' celebrate' : '') + (isHinted ? ' hint-glow' : '');
       el.setAttribute('tabindex', '0');
       el.setAttribute('role', 'button');
       el.setAttribute('aria-label', 'Bottle ' + (idx + 1) + (tube.length ? ', ' + tube.length + ' of ' + CAPACITY + ' filled' : ', empty'));
@@ -716,7 +803,10 @@
     moveCount++;
     selected = null;
     animating = false;
+    hintPair = null;
+    lastMove = { from: fromIdx, to: toIdx };
     render();
+    updateHintUI();
     if (isWin(tubes, CAPACITY)) {
       won = true;
       winTitle.textContent = 'Level ' + level + ' cleared! \u{1F389}';
@@ -751,6 +841,7 @@
       var colorHex = COLOR_BY_ID[topColor(fromTube)].hex;
       var count = Math.min(topRunLength(fromTube), CAPACITY - toTube.length);
       animating = true;
+      updateHintUI();
       spawnPourGrains(fromIdx, toIdx, colorHex, count, function () {
         finishPour(fromIdx, toIdx);
       });
@@ -772,7 +863,24 @@
     moveCount = Math.max(0, moveCount - 1);
     selected = null;
     won = false;
+    hintPair = null;
+    lastMove = null;
     winOverlay.hidden = true;
+    render();
+    updateHintUI();
+  });
+
+  hintBtn.addEventListener('click', function () {
+    if (hintsRemaining <= 0 || animating || won) return;
+    hintMsgEl.textContent = '';
+    var move = findHintMovePreferringForward(tubes, CAPACITY, 300000, 500, lastMove);
+    if (!move) {
+      hintMsgEl.textContent = 'No move found — try Undo.';
+      return;
+    }
+    hintsRemaining--;
+    hintPair = move;
+    updateHintUI();
     render();
   });
 

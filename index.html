@@ -265,6 +265,45 @@
   .win-card p { margin: 0; color: var(--ink-2); font-size: 14px; }
   .win-actions { display: flex; gap: 10px; margin-top: 4px; }
 
+  .name-card { max-width: 340px; }
+  .name-card input {
+    width: 100%;
+    background: var(--panel);
+    border: 1px solid var(--rim);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 14px;
+    color: var(--ink);
+    font-family: inherit;
+    text-align: center;
+  }
+  .name-card input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .lb-card { max-width: 380px; width: 100%; }
+  .lb-list {
+    width: 100%;
+    max-height: 320px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .lb-row {
+    display: grid;
+    grid-template-columns: 24px 1fr auto auto;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+  }
+  .lb-row.me { background: rgba(91,157,238,0.16); }
+  .lb-rank { color: var(--ink-muted); font-variant-numeric: tabular-nums; text-align: center; }
+  .lb-name { color: var(--ink); font-weight: 650; text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lb-level { color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  .lb-moves { color: var(--ink-muted); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+  .lb-empty { color: var(--ink-muted); font-size: 13px; padding: 12px 0; }
+
   footer {
     font-size: 11.5px;
     color: var(--ink-muted);
@@ -298,6 +337,7 @@
     <button class="btn" id="undo-btn" type="button">Undo</button>
     <button class="btn" id="new-btn" type="button">🔀 Reshuffle</button>
     <button class="btn" id="hint-btn" type="button">💡 Hint (<span id="hint-count">1</span>)</button>
+    <button class="btn" id="leaderboard-btn" type="button">🏆 Leaderboard</button>
     <span class="hint-msg" id="hint-msg"></span>
   </div>
 
@@ -318,13 +358,76 @@
   </div>
 </div>
 
+<div id="name-overlay" hidden>
+  <div class="win-card name-card">
+    <h2>Play as&hellip;</h2>
+    <p>Add your name to save progress and show up on the public leaderboard. No email or password &mdash; anyone can play as a guest instead.</p>
+    <input id="name-input" type="text" maxlength="20" placeholder="Your name" autocomplete="off" />
+    <div id="name-confirm" hidden>
+      <p id="name-confirm-text"></p>
+      <div class="win-actions">
+        <button class="btn" id="name-confirm-no" type="button">No, pick another</button>
+        <button class="btn primary" id="name-confirm-yes" type="button">Yes, that's me</button>
+      </div>
+    </div>
+    <p class="hint-msg" id="name-msg"></p>
+    <div class="win-actions" id="name-actions">
+      <button class="btn" id="name-skip-btn" type="button">Play as guest</button>
+      <button class="btn primary" id="name-submit-btn" type="button">Save name</button>
+    </div>
+  </div>
+</div>
+
+<div id="leaderboard-overlay" hidden>
+  <div class="win-card lb-card">
+    <h2>🏆 Leaderboard</h2>
+    <div id="lb-list" class="lb-list"></div>
+    <button class="btn" id="lb-close-btn" type="button">Close</button>
+  </div>
+</div>
+
 <script>
 (function () {
   "use strict";
 
   var TOTAL_BOTTLES = 12;
   var STORAGE_KEY = 'bottleSortLevel';
+  var TOTAL_MOVES_KEY = 'bottleSortTotalMoves';
+  var GUEST_ID_KEY = 'bottleSortGuestId';
+  var GUEST_NAME_KEY = 'bottleSortGuestName';
   var reducedMotion = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // ---------------- Best-effort network helpers ----------------
+  // Any network failure here is swallowed — single-player play must never
+  // depend on the API being reachable.
+  function fetchJSON(url, options) {
+    var controller = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+    var timeoutId = controller && setTimeout(function () { controller.abort(); }, 6000);
+    var opts = options || {};
+    if (controller) opts.signal = controller.signal;
+    return fetch(url, opts).then(function (res) {
+      if (timeoutId) clearTimeout(timeoutId);
+      return res.json().then(function (data) { return { status: res.status, ok: res.ok, body: data }; });
+    }).catch(function () {
+      if (timeoutId) clearTimeout(timeoutId);
+      return null;
+    });
+  }
+
+  function postJSON(url, payload) {
+    return fetchJSON(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+  }
+
+  function makeGuestId() {
+    try {
+      if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+    } catch (e) { /* fall through */ }
+    return 'g-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 12);
+  }
 
   // Ten distinct hue+glyph identities — color alone is not required to tell
   // them apart, since a unique glyph rides on every grain of sand.
@@ -388,6 +491,20 @@
     if (saved > 0) level = saved;
   } catch (e) { /* localStorage unavailable — start at level 1 */ }
 
+  // Lifetime cumulative moves (separate from the per-level moveCount, which
+  // resets on every reshuffle) — this is what's shown on the leaderboard.
+  var totalMoves = 0;
+  try {
+    var savedMoves = parseInt(localStorage.getItem(TOTAL_MOVES_KEY), 10);
+    if (savedMoves >= 0) totalMoves = savedMoves;
+  } catch (e) { /* ignore */ }
+
+  var guestId = null, guestName = null;
+  try {
+    guestId = localStorage.getItem(GUEST_ID_KEY);
+    guestName = localStorage.getItem(GUEST_NAME_KEY);
+  } catch (e) { /* ignore */ }
+
   var CAPACITY = 4;
   var COLORS = [];
   var tubes = [];
@@ -419,8 +536,49 @@
   var hintCountEl = document.getElementById('hint-count');
   var hintMsgEl = document.getElementById('hint-msg');
 
+  var nameOverlay = document.getElementById('name-overlay');
+  var nameInput = document.getElementById('name-input');
+  var nameMsgEl = document.getElementById('name-msg');
+  var nameActionsEl = document.getElementById('name-actions');
+  var nameConfirmEl = document.getElementById('name-confirm');
+  var nameConfirmTextEl = document.getElementById('name-confirm-text');
+  var nameConfirmYesBtn = document.getElementById('name-confirm-yes');
+  var nameConfirmNoBtn = document.getElementById('name-confirm-no');
+  var nameSkipBtn = document.getElementById('name-skip-btn');
+  var nameSubmitBtn = document.getElementById('name-submit-btn');
+
+  var leaderboardBtn = document.getElementById('leaderboard-btn');
+  var leaderboardOverlay = document.getElementById('leaderboard-overlay');
+  var lbListEl = document.getElementById('lb-list');
+  var lbCloseBtn = document.getElementById('lb-close-btn');
+  var lbPollTimer = null;
+
   function saveLevel() {
     try { localStorage.setItem(STORAGE_KEY, String(level)); } catch (e) { /* ignore */ }
+  }
+
+  function saveTotalMoves() {
+    try { localStorage.setItem(TOTAL_MOVES_KEY, String(totalMoves)); } catch (e) { /* ignore */ }
+  }
+
+  function saveGuest() {
+    try {
+      localStorage.setItem(GUEST_ID_KEY, guestId);
+      if (guestName) localStorage.setItem(GUEST_NAME_KEY, guestName);
+    } catch (e) { /* ignore */ }
+  }
+
+  // Fires on Next-Level / Restart — silently does nothing for guests who
+  // skipped naming (guestId === 'skip') or before naming has happened yet.
+  function syncProgress() {
+    if (!guestId || guestId === 'skip') return;
+    postJSON('/api/progress', { guestId: guestId, level: level, moves: totalMoves }).then(function (res) {
+      if (res && res.ok && res.body && res.body.guest) {
+        if (res.body.guest.level > level) { level = res.body.guest.level; saveLevel(); }
+        if (res.body.guest.moves > totalMoves) { totalMoves = res.body.guest.moves; saveTotalMoves(); }
+      }
+      if (!leaderboardOverlay.hidden) refreshLeaderboard();
+    });
   }
 
   // ---------------- Core game rules ----------------
@@ -801,6 +959,8 @@
     history.push(snapshot());
     pour(tubes[fromIdx], tubes[toIdx], CAPACITY);
     moveCount++;
+    totalMoves++;
+    saveTotalMoves();
     selected = null;
     animating = false;
     hintPair = null;
@@ -889,16 +1049,208 @@
   nextBtn.addEventListener('click', function () {
     level++;
     saveLevel();
+    syncProgress();
     newGame();
   });
   resetProgressBtn.addEventListener('click', function () {
     if (animating) return;
     level = 1;
+    totalMoves = 0;
     saveLevel();
+    saveTotalMoves();
+    syncProgress();
     newGame();
   });
 
+  // ---------------- Guest identity (name modal) ----------------
+  var pendingClaimName = null;
+
+  function showNameModal() {
+    nameOverlay.hidden = false;
+    nameMsgEl.textContent = '';
+    nameConfirmEl.hidden = true;
+    nameActionsEl.hidden = false;
+    nameInput.disabled = false;
+    nameInput.focus();
+  }
+
+  function hideNameModal() {
+    nameOverlay.hidden = true;
+  }
+
+  function registerNewName(name) {
+    var newId = makeGuestId();
+    nameMsgEl.textContent = 'Saving…';
+    postJSON('/api/guest', { action: 'register', guestId: newId, name: name, level: level, moves: totalMoves }).then(function (res) {
+      if (res && res.ok && res.body && res.body.ok) {
+        guestId = newId;
+        guestName = name;
+        saveGuest();
+        hideNameModal();
+        return;
+      }
+      if (res && res.status === 409) {
+        var existing = res.body && res.body.existing;
+        pendingClaimName = name;
+        nameConfirmTextEl.textContent = existing
+          ? ('"' + name + '" is already at level ' + existing.level + ' — is that you?')
+          : ('"' + name + '" was just taken — is that you?');
+        nameConfirmEl.hidden = false;
+        nameActionsEl.hidden = true;
+        nameMsgEl.textContent = '';
+        return;
+      }
+      nameMsgEl.textContent = "Couldn't save your name right now — try again, or play as guest.";
+    });
+  }
+
+  nameSkipBtn.addEventListener('click', function () {
+    guestId = 'skip';
+    saveGuest();
+    hideNameModal();
+  });
+
+  nameSubmitBtn.addEventListener('click', function () {
+    var name = nameInput.value.trim().replace(/\s+/g, ' ');
+    if (!name || name.length > 20) {
+      nameMsgEl.textContent = 'Enter a name up to 20 characters.';
+      return;
+    }
+    nameSubmitBtn.disabled = true;
+    nameMsgEl.textContent = 'Checking…';
+    fetchJSON('/api/guest?name=' + encodeURIComponent(name)).then(function (res) {
+      nameSubmitBtn.disabled = false;
+      if (!res) {
+        nameMsgEl.textContent = "Couldn't reach the leaderboard right now — try again, or play as guest.";
+        return;
+      }
+      if (res.body && res.body.available) {
+        registerNewName(name);
+      } else if (res.body && res.body.available === false) {
+        pendingClaimName = name;
+        nameConfirmTextEl.textContent = '"' + name + '" is already at level ' + res.body.level + ' — is that you?';
+        nameConfirmEl.hidden = false;
+        nameActionsEl.hidden = true;
+        nameMsgEl.textContent = '';
+      } else {
+        nameMsgEl.textContent = 'That name is not valid — try something else.';
+      }
+    });
+  });
+
+  nameInput.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !nameSubmitBtn.disabled) nameSubmitBtn.click();
+  });
+
+  nameConfirmYesBtn.addEventListener('click', function () {
+    if (!pendingClaimName) return;
+    nameConfirmYesBtn.disabled = true;
+    postJSON('/api/guest', { action: 'claim', name: pendingClaimName }).then(function (res) {
+      nameConfirmYesBtn.disabled = false;
+      if (res && res.ok && res.body && res.body.ok && res.body.guest) {
+        var g = res.body.guest;
+        guestId = g.guestId;
+        guestName = g.name;
+        var changed = false;
+        if (g.level > level) { level = g.level; saveLevel(); changed = true; }
+        if (g.moves > totalMoves) { totalMoves = g.moves; saveTotalMoves(); }
+        saveGuest();
+        hideNameModal();
+        if (changed) newGame();
+        return;
+      }
+      nameMsgEl.textContent = "Couldn't claim that name right now — try again.";
+      nameConfirmEl.hidden = true;
+      nameActionsEl.hidden = false;
+    });
+  });
+
+  nameConfirmNoBtn.addEventListener('click', function () {
+    pendingClaimName = null;
+    nameConfirmEl.hidden = true;
+    nameActionsEl.hidden = false;
+    nameInput.value = '';
+    nameInput.focus();
+  });
+
+  // ---------------- Leaderboard ----------------
+  function renderLeaderboard(players) {
+    lbListEl.innerHTML = '';
+    if (!players.length) {
+      var empty = document.createElement('div');
+      empty.className = 'lb-empty';
+      empty.textContent = 'No one on the leaderboard yet — be the first!';
+      lbListEl.appendChild(empty);
+      return;
+    }
+    var isNamed = guestId && guestId !== 'skip' && guestName;
+    players.forEach(function (p, i) {
+      var row = document.createElement('div');
+      row.className = 'lb-row' + (isNamed && p.name === guestName ? ' me' : '');
+      var rank = document.createElement('span');
+      rank.className = 'lb-rank';
+      rank.textContent = String(i + 1);
+      var name = document.createElement('span');
+      name.className = 'lb-name';
+      name.textContent = p.name; // untrusted string — textContent only, never innerHTML
+      var lvl = document.createElement('span');
+      lvl.className = 'lb-level';
+      lvl.textContent = 'Lvl ' + p.level;
+      var mv = document.createElement('span');
+      mv.className = 'lb-moves';
+      mv.textContent = p.moves + ' moves';
+      row.appendChild(rank);
+      row.appendChild(name);
+      row.appendChild(lvl);
+      row.appendChild(mv);
+      lbListEl.appendChild(row);
+    });
+  }
+
+  function refreshLeaderboard() {
+    fetchJSON('/api/leaderboard').then(function (res) {
+      if (leaderboardOverlay.hidden) return; // closed while in flight
+      if (res && res.ok && res.body && res.body.players) {
+        renderLeaderboard(res.body.players);
+      } else {
+        lbListEl.innerHTML = '';
+        var err = document.createElement('div');
+        err.className = 'lb-empty';
+        err.textContent = "Couldn't load the leaderboard right now.";
+        lbListEl.appendChild(err);
+      }
+    });
+  }
+
+  leaderboardBtn.addEventListener('click', function () {
+    leaderboardOverlay.hidden = false;
+    lbListEl.innerHTML = '<div class="lb-empty">Loading…</div>';
+    refreshLeaderboard();
+    if (lbPollTimer) clearInterval(lbPollTimer);
+    lbPollTimer = setInterval(refreshLeaderboard, 20000);
+  });
+
+  lbCloseBtn.addEventListener('click', function () {
+    leaderboardOverlay.hidden = true;
+    if (lbPollTimer) { clearInterval(lbPollTimer); lbPollTimer = null; }
+  });
+
+  function initGuestFlow() {
+    if (!guestId) { showNameModal(); return; }
+    if (guestId === 'skip') return;
+    fetchJSON('/api/progress?guestId=' + encodeURIComponent(guestId)).then(function (res) {
+      if (res && res.ok && res.body && res.body.guest) {
+        var g = res.body.guest;
+        var changed = false;
+        if (g.level > level) { level = g.level; saveLevel(); changed = true; }
+        if (g.moves > totalMoves) { totalMoves = g.moves; saveTotalMoves(); }
+        if (changed) newGame();
+      }
+    });
+  }
+
   newGame();
+  initGuestFlow();
 })();
 </script>
 </body>

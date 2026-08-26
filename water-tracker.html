@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#0a5c73">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Drip — Water Tracker</title>
+<style>
+  :root{
+    --deep:   #043a52;
+    --mid:    #0596a6;
+    --bright: #1fd1c9;
+    --foam:   #d9fbf6;
+    --ink:    #06313f;
+    --ink-2:  #4c7f8a;
+    --card:   rgba(255,255,255,0.86);
+    --card-b: rgba(255,255,255,0.55);
+    --accent: #ff8a65;
+    --good:   #22c39a;
+    --safe-t: env(safe-area-inset-top, 0px);
+    --safe-b: env(safe-area-inset-bottom, 0px);
+  }
+  *{ box-sizing:border-box; -webkit-tap-highlight-color: transparent; }
+  html,body{
+    margin:0; height:100%; overscroll-behavior:none;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    color: var(--ink);
+    background: linear-gradient(180deg,#8fe9ec 0%, #bff3ee 40%, #eafffb 100%);
+  }
+  body{ position:relative; overflow:hidden; touch-action: none; }
+
+  /* ---------- background sky bubbles ---------- */
+  .sky-bubble{
+    position:fixed; border-radius:50%;
+    background: radial-gradient(circle at 30% 30%, rgba(255,255,255,0.9), rgba(255,255,255,0.05) 70%);
+    opacity:0.55; pointer-events:none; z-index:1;
+    animation: floatUp linear infinite;
+  }
+  @keyframes floatUp{
+    from{ transform:translateY(0) translateX(0); }
+    to{ transform:translateY(-120vh) translateX(var(--drift,10px)); }
+  }
+
+  /* droplet particles on tap */
+  .drop{
+    position:fixed; z-index:6; pointer-events:none; border-radius:50% 50% 50% 0;
+    background: radial-gradient(circle at 35% 30%, #fff, var(--bright) 60%, var(--mid));
+    animation: dropUp 0.85s cubic-bezier(.15,.7,.3,1) forwards;
+  }
+  @keyframes dropUp{
+    0%{ transform: translate(0,0) rotate(45deg) scale(0.4); opacity:1; }
+    70%{ opacity:1; }
+    100%{ transform: translate(var(--dx), var(--dy)) rotate(45deg) scale(1); opacity:0; }
+  }
+
+  /* ---------- top bar ---------- */
+  .top-bar{
+    position:fixed; top:calc(12px + var(--safe-t)); left:0; right:0; z-index:10;
+    display:flex; justify-content:center; gap:8px; padding:0 14px;
+  }
+  .chip{
+    display:flex; align-items:center; gap:6px;
+    background: var(--card); backdrop-filter: blur(8px);
+    border:1px solid var(--card-b); color:var(--ink);
+    font-size:13px; font-weight:700; padding:8px 12px; border-radius:999px;
+    box-shadow:0 4px 14px rgba(5,60,70,0.15);
+    border:none; cursor:pointer; white-space:nowrap;
+  }
+  .chip.on{ background: linear-gradient(135deg, var(--good), var(--bright)); color:#04352c; }
+  .streak-chip{ font-weight:800; }
+
+  /* ---------- weekday history strip ---------- */
+  .week-strip{
+    position:fixed; top:calc(58px + var(--safe-t)); left:50%; transform:translateX(-50%); z-index:9;
+    display:flex; gap:7px; background:var(--card); backdrop-filter:blur(8px);
+    padding:9px 11px; border-radius:18px; box-shadow:0 4px 14px rgba(5,60,70,0.15);
+  }
+  .week-cell{ display:flex; flex-direction:column; align-items:center; gap:4px; width:24px; }
+  .week-cell .wc-label{ font-size:10px; font-weight:800; color:var(--ink-2); }
+  .week-cell .wc-track{
+    width:13px; height:30px; border-radius:7px; background:#e3f5f2; position:relative; overflow:hidden;
+  }
+  .week-cell .wc-fill{
+    position:absolute; left:0; right:0; bottom:0; height:0%; border-radius:7px;
+    background:linear-gradient(180deg,var(--bright),var(--mid)); transition:height 0.4s ease;
+  }
+  .week-cell.today .wc-track{ box-shadow:0 0 0 2px var(--mid) inset; }
+
+  /* ---------- mascot stage (big, centered) ---------- */
+  .stage{
+    position:fixed; inset:0; z-index:5;
+    display:flex; align-items:center; justify-content:center;
+    padding-top:calc(150px + var(--safe-t)); padding-bottom:calc(150px + var(--safe-b));
+    pointer-events:none;
+  }
+  .mascot-card{
+    pointer-events:auto; width:min(76vw,48vh,340px);
+    display:flex; flex-direction:column; align-items:center; gap:10px;
+    animation: cardIn 0.5s cubic-bezier(.34,1.56,.64,1) both;
+  }
+  @keyframes cardIn{ from{ opacity:0; transform:translateY(-14px) scale(0.85);} to{ opacity:1; transform:translateY(0) scale(1);} }
+  .mascot-art{ position:relative; width:100%; aspect-ratio:1/1; filter: drop-shadow(0 10px 18px rgba(4,58,82,0.25)); }
+  .mascot-art.bounce{ animation: mascotBounce 0.55s cubic-bezier(.36,1.9,.4,1); }
+  @keyframes mascotBounce{ 0%{transform:scale(1);} 35%{transform:scale(1.12,0.9) translateY(4px);} 65%{transform:scale(0.95,1.08) translateY(-3px);} 100%{transform:scale(1);} }
+  .mascot-layer{ position:absolute; inset:0; }
+  .mascot-layer.gray{ filter: grayscale(1) contrast(0.85) brightness(1.08) opacity(0.55); }
+  .mascot-layer.color{ clip-path: inset(100% 0 0 0); transition: clip-path 0.05s linear; }
+  .mascot-name{
+    font-size:15px; font-weight:800; color:var(--ink); background:var(--card);
+    padding:5px 14px; border-radius:999px; box-shadow:0 3px 8px rgba(5,60,70,0.15);
+  }
+
+  /* ---------- total (below mascot, in-flow) ---------- */
+  .total-label{
+    font-size:clamp(30px,10vw,52px); font-weight:900; letter-spacing:-0.03em; color:var(--deep);
+    display:flex; align-items:baseline; gap:4px; line-height:1;
+  }
+  .total-label span{ font-size:0.36em; font-weight:800; color:var(--mid); }
+  .total-label.pulse{ animation: totalPulse 0.5s cubic-bezier(.36,1.9,.4,1); }
+  @keyframes totalPulse{ 0%{transform:scale(1);} 40%{transform:scale(1.18);} 100%{transform:scale(1);} }
+  .of-goal{ font-size:13px; font-weight:700; color:var(--ink-2); }
+
+  /* ---------- controls ---------- */
+  .controls{
+    position:fixed; left:0; right:0; bottom:calc(22px + var(--safe-b)); z-index:12;
+    display:flex; align-items:center; justify-content:center; gap:18px;
+  }
+  .plus-btn{
+    width:88px; height:88px; border-radius:50%; border:none; cursor:pointer;
+    background: radial-gradient(circle at 32% 28%, #fff 0%, var(--foam) 18%, var(--bright) 55%, var(--mid) 100%);
+    box-shadow: 0 10px 0 rgba(4,58,82,0.28), 0 16px 30px rgba(4,58,82,0.35);
+    color: var(--deep); font-size:44px; font-weight:900; line-height:1;
+    display:flex; align-items:center; justify-content:center;
+    transition: transform 0.08s ease, box-shadow 0.08s ease;
+  }
+  .plus-btn:active{ transform: translateY(8px); box-shadow: 0 2px 0 rgba(4,58,82,0.28), 0 6px 14px rgba(4,58,82,0.3); }
+  .minus-btn{
+    width:52px; height:52px; border-radius:50%; border:none; cursor:pointer;
+    background: var(--card); color:var(--ink); font-size:12px; font-weight:800;
+    box-shadow: 0 6px 16px rgba(4,58,82,0.22); transition: transform 0.08s ease;
+  }
+  .minus-btn:active{ transform: translateY(4px) scale(0.96); }
+
+  /* ---------- toast ---------- */
+  .toast{
+    position:fixed; left:50%; bottom:calc(128px + var(--safe-b)); transform:translateX(-50%) translateY(20px);
+    z-index:20; background: rgba(6,49,63,0.92); color:#fff; font-size:13px; font-weight:700;
+    padding:9px 16px; border-radius:999px; opacity:0; pointer-events:none;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  .toast.show{ opacity:1; transform:translateX(-50%) translateY(0); }
+
+  /* ---------- sheets / modals ---------- */
+  .backdrop{
+    position:fixed; inset:0; background:rgba(4,30,40,0.45); z-index:30; opacity:0; pointer-events:none;
+    transition: opacity 0.25s ease;
+  }
+  .backdrop.show{ opacity:1; pointer-events:auto; }
+  .sheet{
+    position:fixed; left:0; right:0; bottom:0; z-index:31;
+    background: linear-gradient(180deg, #ffffff, #f2fdfb);
+    border-radius:24px 24px 0 0; padding:20px 20px calc(24px + var(--safe-b));
+    transform: translateY(110%); transition: transform 0.32s cubic-bezier(.32,1,.4,1);
+    box-shadow: 0 -10px 40px rgba(4,58,82,0.3);
+    max-height:82vh; overflow-y:auto;
+  }
+  .sheet.show{ transform: translateY(0); }
+  .sheet h2{ margin:0 0 4px; font-size:19px; color:var(--ink); }
+  .sheet p.sub{ margin:0 0 16px; font-size:13px; color:var(--ink-2); }
+  .goal-picks{ display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; }
+  .goal-pick{
+    flex:1 1 auto; min-width:64px; padding:12px 6px; border-radius:14px; border:2px solid transparent;
+    background:#eafcfa; color:var(--ink); font-weight:800; font-size:14px; cursor:pointer; text-align:center;
+  }
+  .goal-pick.sel{ border-color: var(--mid); background:#d3f7f1; }
+  .goal-custom{ display:flex; align-items:center; gap:10px; margin-bottom:18px; }
+  .goal-custom input{
+    flex:1; padding:12px 14px; border-radius:14px; border:2px solid #dff3f1; font-size:15px; font-weight:700;
+    color:var(--ink); background:#fbfffe;
+  }
+  .goal-custom span{ font-size:13px; color:var(--ink-2); font-weight:700; }
+  .sheet-row{ display:flex; align-items:center; justify-content:space-between; padding:12px 2px; border-top:1px solid #e7f6f4; font-size:14px; font-weight:700; }
+  .sheet-actions{ display:flex; gap:10px; margin-top:6px; }
+  .btn{
+    flex:1; border:none; padding:14px; border-radius:16px; font-size:15px; font-weight:800; cursor:pointer;
+  }
+  .btn-primary{ background: linear-gradient(135deg, var(--bright), var(--mid)); color:#fff; }
+  .btn-ghost{ background:#eef8f7; color:var(--ink-2); }
+  .switch{
+    width:46px; height:27px; border-radius:999px; background:#dcefec; position:relative; cursor:pointer; border:none; flex-shrink:0;
+  }
+  .switch::after{ content:''; position:absolute; top:3px; left:3px; width:21px; height:21px; border-radius:50%; background:#fff; box-shadow:0 2px 4px rgba(0,0,0,0.2); transition: left 0.2s ease; }
+  .switch.on{ background: var(--good); }
+  .switch.on::after{ left:22px; }
+
+  /* onboarding modal (day start) */
+  .day-modal{
+    position:fixed; inset:0; z-index:40; display:flex; align-items:center; justify-content:center;
+    background: radial-gradient(circle at 50% 20%, #baf3ee, #6fd9d1 60%, #1fb3ab 100%);
+    opacity:0; pointer-events:none; transition: opacity 0.35s ease;
+  }
+  .day-modal.show{ opacity:1; pointer-events:auto; }
+  .day-card{
+    width:min(86vw,360px); background:#fff; border-radius:28px; padding:26px 22px; text-align:center;
+    box-shadow:0 20px 50px rgba(4,58,82,0.35);
+    transform: translateY(20px) scale(0.94); transition: transform 0.4s cubic-bezier(.34,1.56,.64,1);
+  }
+  .day-modal.show .day-card{ transform: translateY(0) scale(1); }
+  .day-mascot{ width:120px; height:120px; margin:0 auto 10px; }
+  .day-greet{ font-size:20px; font-weight:900; color:var(--ink); margin:0 0 2px; }
+  .day-sub{ font-size:13.5px; color:var(--ink-2); margin:0 0 16px; }
+
+  /* confetti */
+  .confetti{ position:fixed; top:-10px; z-index:50; pointer-events:none; border-radius:2px; animation: confettiFall linear forwards; }
+  @keyframes confettiFall{ to{ transform: translateY(110vh) rotate(540deg); opacity:0.3; } }
+
+  @media (min-width:560px){
+    .total-label{ font-size:64px; } .total-label span{ font-size:26px; }
+  }
+</style>
+</head>
+<body>
+
+<div id="skyBubbles"></div>
+
+<div class="top-bar">
+  <button class="chip streak-chip" id="streakChip">🔥 0</button>
+  <button class="chip" id="goalChip">🎯 Goal 2.0L</button>
+  <button class="chip" id="notifChip">🔔 Reminders</button>
+</div>
+
+<div class="week-strip" id="weekStrip"></div>
+
+<div class="stage">
+  <div class="mascot-card" id="mascotCard">
+    <div class="mascot-name" id="mascotName">—</div>
+    <div class="mascot-art" id="mascotArt">
+      <div class="mascot-layer gray" id="mascotGray"></div>
+      <div class="mascot-layer color" id="mascotColor"></div>
+    </div>
+    <div class="total-label" id="totalLabel">0<span>L</span></div>
+    <div class="of-goal" id="ofGoal">of 2.0L today</div>
+  </div>
+</div>
+
+<div class="controls">
+  <button class="minus-btn" id="minusBtn">−250</button>
+  <button class="plus-btn" id="plusBtn">+</button>
+  <div style="width:52px"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<div class="backdrop" id="backdrop"></div>
+<div class="sheet" id="sheet">
+  <h2>Settings</h2>
+  <p class="sub">Adjust today's goal or manage reminders.</p>
+  <div class="goal-picks" id="goalPicks"></div>
+  <div class="goal-custom">
+    <input type="number" id="customGoal" placeholder="Custom (ml)" min="250" step="50">
+    <span>ml</span>
+  </div>
+  <div class="sheet-row">
+    <span>Hourly reminders</span>
+    <button class="switch" id="switchReminders"></button>
+  </div>
+  <div class="sheet-row" id="resetRow" style="cursor:pointer;">
+    <span style="color:#d1583f;">Reset today's total</span>
+    <span>↺</span>
+  </div>
+  <div class="sheet-actions">
+    <button class="btn btn-ghost" id="sheetClose">Close</button>
+    <button class="btn btn-primary" id="sheetSave">Save goal</button>
+  </div>
+</div>
+
+<div class="day-modal" id="dayModal">
+  <div class="day-card">
+    <div class="day-mascot" id="dayMascot"></div>
+    <p class="day-greet" id="dayGreet">Good morning!</p>
+    <p class="day-sub" id="daySub">Meet today's companion. What's your water goal?</p>
+    <div class="goal-picks" id="dayGoalPicks"></div>
+    <div class="goal-custom">
+      <input type="number" id="dayCustomGoal" placeholder="Custom (ml)" min="250" step="50">
+      <span>ml</span>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn btn-primary" id="dayStart" style="flex:1;">Let's go! 💧</button>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  "use strict";
+
+  /* ======================= mascots ======================= */
+  const MASCOTS = [
+    { key:'otter', name:'Bubbles the Otter', svg: `
+      <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="60" cy="78" rx="34" ry="28" fill="#3fb8c9"/>
+        <ellipse cx="60" cy="84" rx="20" ry="15" fill="#eafcfb"/>
+        <circle cx="60" cy="46" r="30" fill="#3fb8c9"/>
+        <circle cx="38" cy="26" r="10" fill="#3fb8c9"/>
+        <circle cx="82" cy="26" r="10" fill="#3fb8c9"/>
+        <circle cx="38" cy="27" r="5" fill="#eafcfb"/>
+        <circle cx="82" cy="27" r="5" fill="#eafcfb"/>
+        <ellipse cx="60" cy="56" rx="16" ry="13" fill="#eafcfb"/>
+        <circle cx="49" cy="42" r="5" fill="#083b44"/>
+        <circle cx="71" cy="42" r="5" fill="#083b44"/>
+        <circle cx="51" cy="40" r="1.6" fill="#fff"/>
+        <circle cx="73" cy="40" r="1.6" fill="#fff"/>
+        <ellipse cx="45" cy="52" rx="5" ry="3.4" fill="#ffb4a2" opacity="0.8"/>
+        <ellipse cx="75" cy="52" rx="5" ry="3.4" fill="#ffb4a2" opacity="0.8"/>
+        <ellipse cx="60" cy="53" rx="4" ry="3" fill="#083b44"/>
+        <path d="M60 56 Q60 61 55 61 M60 56 Q60 61 65 61" stroke="#083b44" stroke-width="2" fill="none" stroke-linecap="round"/>
+      </svg>`},
+    { key:'duck', name:'Splash the Duck', svg: `
+      <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="60" cy="82" rx="32" ry="26" fill="#ffd54a"/>
+        <circle cx="60" cy="46" r="28" fill="#ffd54a"/>
+        <path d="M28 46 Q10 44 14 56 Q22 60 32 52 Z" fill="#ff9d3d"/>
+        <circle cx="50" cy="40" r="5" fill="#083b44"/>
+        <circle cx="52" cy="38" r="1.6" fill="#fff"/>
+        <ellipse cx="45" cy="50" rx="5" ry="3.4" fill="#ff7a59" opacity="0.6"/>
+        <path d="M55 92 Q45 100 34 94" stroke="#ff9d3d" stroke-width="6" fill="none" stroke-linecap="round"/>
+        <path d="M65 92 Q75 100 86 94" stroke="#ff9d3d" stroke-width="6" fill="none" stroke-linecap="round"/>
+        <path d="M60 20 Q54 6 42 12" stroke="#ffd54a" stroke-width="8" fill="none" stroke-linecap="round"/>
+      </svg>`},
+    { key:'bear', name:'Chip the Bear', svg: `
+      <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="60" cy="80" rx="33" ry="27" fill="#b6813f"/>
+        <ellipse cx="60" cy="86" rx="18" ry="14" fill="#f0d5ab"/>
+        <circle cx="60" cy="46" r="29" fill="#b6813f"/>
+        <circle cx="33" cy="24" r="11" fill="#b6813f"/>
+        <circle cx="87" cy="24" r="11" fill="#b6813f"/>
+        <circle cx="33" cy="25" r="5.5" fill="#f0d5ab"/>
+        <circle cx="87" cy="25" r="5.5" fill="#f0d5ab"/>
+        <ellipse cx="60" cy="56" rx="17" ry="13" fill="#f0d5ab"/>
+        <circle cx="49" cy="42" r="4.6" fill="#3a2415"/>
+        <circle cx="71" cy="42" r="4.6" fill="#3a2415"/>
+        <circle cx="51" cy="40" r="1.4" fill="#fff"/>
+        <circle cx="73" cy="40" r="1.4" fill="#fff"/>
+        <ellipse cx="60" cy="54" rx="6" ry="4.4" fill="#3a2415"/>
+        <path d="M60 58 Q60 63 54 63 M60 58 Q60 63 66 63" stroke="#3a2415" stroke-width="2" fill="none" stroke-linecap="round"/>
+      </svg>`},
+    { key:'penguin', name:'Percy the Penguin', svg: `
+      <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="60" cy="80" rx="30" ry="30" fill="#243b53"/>
+        <ellipse cx="60" cy="86" rx="17" ry="20" fill="#eef4fb"/>
+        <circle cx="60" cy="42" r="26" fill="#243b53"/>
+        <ellipse cx="60" cy="48" rx="15" ry="15" fill="#eef4fb"/>
+        <circle cx="52" cy="42" r="4.4" fill="#0b1b2b"/>
+        <circle cx="68" cy="42" r="4.4" fill="#0b1b2b"/>
+        <circle cx="54" cy="40" r="1.4" fill="#fff"/>
+        <circle cx="70" cy="40" r="1.4" fill="#fff"/>
+        <path d="M53 50 L67 50 L60 58 Z" fill="#ff9d3d"/>
+        <path d="M30 92 L20 100 L32 100 Z" fill="#ff9d3d"/>
+        <path d="M90 92 L100 100 L88 100 Z" fill="#ff9d3d"/>
+      </svg>`},
+    { key:'fox', name:'Ginger the Fox', svg: `
+      <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="60" cy="82" rx="32" ry="26" fill="#e8813a"/>
+        <ellipse cx="60" cy="88" rx="17" ry="13" fill="#fff3e4"/>
+        <circle cx="60" cy="46" r="28" fill="#e8813a"/>
+        <path d="M30 30 L20 4 L44 20 Z" fill="#e8813a"/>
+        <path d="M90 30 L100 4 L76 20 Z" fill="#e8813a"/>
+        <path d="M32 26 L27 12 L40 21 Z" fill="#3a2415"/>
+        <path d="M88 26 L93 12 L80 21 Z" fill="#3a2415"/>
+        <path d="M42 60 Q60 74 78 60 L74 50 Q60 60 46 50 Z" fill="#fff3e4"/>
+        <circle cx="49" cy="42" r="4.6" fill="#3a2415"/>
+        <circle cx="71" cy="42" r="4.6" fill="#3a2415"/>
+        <circle cx="51" cy="40" r="1.4" fill="#fff"/>
+        <circle cx="73" cy="40" r="1.4" fill="#fff"/>
+        <path d="M56 54 L64 54 L60 60 Z" fill="#3a2415"/>
+      </svg>`},
+    { key:'whale', name:'Marina the Whale', svg: `
+      <svg viewBox="0 0 120 120" xmlns="http://www.w3.org/2000/svg">
+        <ellipse cx="58" cy="66" rx="40" ry="30" fill="#4a7fd6"/>
+        <ellipse cx="58" cy="78" rx="26" ry="14" fill="#e9f2ff"/>
+        <path d="M96 60 Q112 50 110 68 Q108 78 92 74 Z" fill="#4a7fd6"/>
+        <path d="M40 26 Q44 6 52 24" stroke="#a9c9ff" stroke-width="7" fill="none" stroke-linecap="round"/>
+        <path d="M52 22 Q56 2 64 20" stroke="#a9c9ff" stroke-width="7" fill="none" stroke-linecap="round"/>
+        <circle cx="44" cy="56" r="4.6" fill="#0b2a52"/>
+        <circle cx="46" cy="54" r="1.4" fill="#fff"/>
+        <ellipse cx="34" cy="66" rx="5" ry="3.4" fill="#ff9db0" opacity="0.7"/>
+      </svg>`},
+  ];
+
+  /* ======================= state ======================= */
+  const STORE_KEY = 'drip-water-tracker-v1';
+  function todayStr(d){
+    d = d || new Date();
+    const m = String(d.getMonth()+1).padStart(2,'0');
+    const day = String(d.getDate()).padStart(2,'0');
+    return d.getFullYear()+'-'+m+'-'+day;
+  }
+  function dayIndexSeed(str){ let h=0; for(let i=0;i<str.length;i++){ h=(h*31+str.charCodeAt(i))|0; } return Math.abs(h); }
+
+  function load(){
+    try{ return JSON.parse(localStorage.getItem(STORE_KEY)) || null; }catch(e){ return null; }
+  }
+
+  let state = load();
+  const isNewDay = !state || state.date !== todayStr();
+  const hadPriorState = !!state;
+  if(!state){
+    state = { date: todayStr(), goalMl: 2000, totalMl: 0, streak: 0, remindersOn:false,
+              lastDrinkTs: Date.now(), lastNotifiedTs: Date.now(), celebrated:false, mascotIdx:0,
+              onboarded:false, history:{} };
+  } else if(isNewDay){
+    const metGoal = state.totalMl >= state.goalMl;
+    state.streak = metGoal ? (state.streak||0)+1 : 0;
+    state.date = todayStr();
+    state.totalMl = 0;
+    state.celebrated = false;
+    state.lastDrinkTs = Date.now();
+    state.lastNotifiedTs = Date.now();
+  }
+  if(state.onboarded === undefined) state.onboarded = true; // pre-existing installs skip the ask
+  if(!state.history) state.history = {};
+  state.mascotIdx = dayIndexSeed(state.date) % MASCOTS.length;
+  const mascot = MASCOTS[state.mascotIdx];
+
+  function syncHistory(){
+    state.history[state.date] = { totalMl: state.totalMl, goalMl: state.goalMl };
+    const keys = Object.keys(state.history).sort();
+    if(keys.length > 14){ keys.slice(0, keys.length-14).forEach(k=> delete state.history[k]); }
+  }
+  function save(){
+    syncHistory();
+    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    renderWeekStrip();
+  }
+
+  /* ======================= dom refs ======================= */
+  const totalLabel = document.getElementById('totalLabel');
+  const ofGoal = document.getElementById('ofGoal');
+  const mascotGray = document.getElementById('mascotGray');
+  const mascotColor = document.getElementById('mascotColor');
+  const mascotArt = document.getElementById('mascotArt');
+  const mascotName = document.getElementById('mascotName');
+  const goalChip = document.getElementById('goalChip');
+  const streakChip = document.getElementById('streakChip');
+  const notifChip = document.getElementById('notifChip');
+  const plusBtn = document.getElementById('plusBtn');
+  const minusBtn = document.getElementById('minusBtn');
+  const toast = document.getElementById('toast');
+  const backdrop = document.getElementById('backdrop');
+  const sheet = document.getElementById('sheet');
+  const goalPicks = document.getElementById('goalPicks');
+  const customGoal = document.getElementById('customGoal');
+  const switchReminders = document.getElementById('switchReminders');
+  const resetRow = document.getElementById('resetRow');
+  const sheetClose = document.getElementById('sheetClose');
+  const sheetSave = document.getElementById('sheetSave');
+  const dayModal = document.getElementById('dayModal');
+  const dayMascot = document.getElementById('dayMascot');
+  const dayGreet = document.getElementById('dayGreet');
+  const daySub = document.getElementById('daySub');
+  const dayGoalPicks = document.getElementById('dayGoalPicks');
+  const dayCustomGoal = document.getElementById('dayCustomGoal');
+  const dayStart = document.getElementById('dayStart');
+
+  mascotGray.innerHTML = mascot.svg;
+  mascotColor.innerHTML = mascot.svg;
+  dayMascot.innerHTML = mascot.svg;
+  mascotName.textContent = mascot.name;
+
+  const GOAL_OPTIONS = [1500, 2000, 2500, 3000];
+  function buildGoalPicks(container, activeGoal){
+    container.innerHTML = '';
+    GOAL_OPTIONS.forEach(ml=>{
+      const b = document.createElement('button');
+      b.className = 'goal-pick' + (ml===activeGoal ? ' sel':'');
+      b.textContent = (ml/1000).toFixed(1)+'L';
+      b.dataset.ml = ml;
+      b.addEventListener('click', ()=>{
+        container.querySelectorAll('.goal-pick').forEach(x=>x.classList.remove('sel'));
+        b.classList.add('sel');
+        container.dataset.chosen = ml;
+      });
+      container.appendChild(b);
+    });
+    container.dataset.chosen = activeGoal;
+  }
+
+  /* ======================= render ======================= */
+  let displayedMl = 0;
+  let rafId = null;
+
+  function fmtLiters(ml){
+    return (ml/1000).toFixed(ml < 1000 ? 2 : 1);
+  }
+
+  function render(ml){
+    const percent = Math.max(0, ml / state.goalMl * 100);
+    const coloredFraction = Math.max(0, Math.min(1, percent/100));
+    mascotColor.style.clipPath = `inset(${(1-coloredFraction)*100}% 0 0 0)`;
+
+    totalLabel.innerHTML = fmtLiters(ml) + '<span>L</span>';
+    ofGoal.textContent = 'of ' + (state.goalMl/1000).toFixed(1) + 'L today';
+  }
+
+  function animateTo(target, {bump=false} = {}){
+    if(rafId) cancelAnimationFrame(rafId);
+    const start = displayedMl;
+    const startTime = performance.now();
+    const dur = 700;
+    if(bump){
+      mascotArt.classList.remove('bounce'); void mascotArt.offsetWidth; mascotArt.classList.add('bounce');
+      totalLabel.classList.remove('pulse'); void totalLabel.offsetWidth; totalLabel.classList.add('pulse');
+    }
+    function step(now){
+      const t = Math.min(1, (now-startTime)/dur);
+      const eased = 1 - Math.pow(1-t, 3);
+      displayedMl = start + (target-start)*eased;
+      render(displayedMl);
+      if(t < 1){ rafId = requestAnimationFrame(step); }
+      else{ checkGoalCelebration(); }
+    }
+    rafId = requestAnimationFrame(step);
+  }
+
+  function renderWeekStrip(){
+    const container = document.getElementById('weekStrip');
+    if(!container) return;
+    container.innerHTML = '';
+    for(let i=6;i>=0;i--){
+      const d = new Date();
+      d.setDate(d.getDate()-i);
+      const ds = todayStr(d);
+      const entry = state.history[ds];
+      const pct = entry && entry.goalMl ? Math.max(0, Math.min(100, Math.round(entry.totalMl/entry.goalMl*100))) : 0;
+      const cell = document.createElement('div');
+      cell.className = 'week-cell' + (ds === state.date ? ' today' : '');
+      cell.title = entry ? `${(entry.totalMl/1000).toFixed(1)}L of ${(entry.goalMl/1000).toFixed(1)}L` : 'No data';
+      const label = d.toLocaleDateString(undefined, {weekday:'narrow'});
+      cell.innerHTML = `<span class="wc-label">${label}</span><span class="wc-track"><span class="wc-fill" style="height:${pct}%"></span></span>`;
+      container.appendChild(cell);
+    }
+  }
+
+  function checkGoalCelebration(){
+    if(state.totalMl >= state.goalMl && !state.celebrated){
+      state.celebrated = true; save();
+      launchConfetti();
+      showToast("Goal reached! You're a hydration hero! 🎉");
+    }
+  }
+
+  function updateChips(){
+    goalChip.textContent = '🎯 Goal ' + (state.goalMl/1000).toFixed(1) + 'L';
+    streakChip.textContent = '🔥 ' + (state.streak||0);
+    notifChip.textContent = state.remindersOn ? '🔔 Reminders on' : '🔔 Reminders';
+    notifChip.classList.toggle('on', !!state.remindersOn);
+  }
+
+  /* ======================= interactions ======================= */
+  const TOAST_MSGS = ["Splish splash! 💦","Keep it flowing!","Hydration hero!","Nice sip!","Your body says thanks!","Fresh & bubbly!"];
+  let toastTimer = null;
+  function showToast(msg){
+    toast.textContent = msg;
+    toast.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(()=>toast.classList.remove('show'), 1800);
+  }
+
+  function spawnDroplets(x, y){
+    const n = 8 + Math.floor(Math.random()*4);
+    for(let i=0;i<n;i++){
+      const d = document.createElement('div');
+      d.className = 'drop';
+      const size = 8 + Math.random()*10;
+      d.style.width = size+'px';
+      d.style.height = size+'px';
+      d.style.left = (x - size/2) + 'px';
+      d.style.top = (y - size/2) + 'px';
+      const angle = (Math.random()*Math.PI) + Math.PI; // upward-ish spread
+      const dist = 60 + Math.random()*90;
+      d.style.setProperty('--dx', (Math.cos(angle)*dist).toFixed(1)+'px');
+      d.style.setProperty('--dy', (Math.sin(angle)*dist).toFixed(1)+'px');
+      document.body.appendChild(d);
+      d.addEventListener('animationend', ()=>d.remove());
+    }
+  }
+
+  function logWater(amountMl, originEl){
+    state.totalMl = Math.max(0, state.totalMl + amountMl);
+    state.lastDrinkTs = Date.now();
+    state.lastNotifiedTs = Date.now();
+    save();
+    animateTo(state.totalMl, {bump:true});
+    if(amountMl > 0){
+      const r = originEl.getBoundingClientRect();
+      spawnDroplets(r.left + r.width/2, r.top + r.height*0.2);
+      showToast(TOAST_MSGS[Math.floor(Math.random()*TOAST_MSGS.length)]);
+      if(navigator.vibrate) navigator.vibrate(15);
+    }
+  }
+
+  plusBtn.addEventListener('click', ()=> logWater(250, plusBtn));
+  minusBtn.addEventListener('click', ()=> logWater(-250, minusBtn));
+
+  function launchConfetti(){
+    const colors = ['#1fd1c9','#0596a6','#ffd54a','#ff8a65','#ffffff'];
+    for(let i=0;i<28;i++){
+      const c = document.createElement('div');
+      c.className = 'confetti';
+      c.style.left = Math.random()*100 + 'vw';
+      c.style.width = (6+Math.random()*6)+'px';
+      c.style.height = (6+Math.random()*6)+'px';
+      c.style.background = colors[i%colors.length];
+      c.style.animationDuration = (2 + Math.random()*1.5)+'s';
+      document.body.appendChild(c);
+      c.addEventListener('animationend', ()=>c.remove());
+    }
+  }
+
+  function makeSkyBubbles(){
+    const wrap = document.getElementById('skyBubbles');
+    for(let i=0;i<10;i++){
+      const b = document.createElement('div');
+      b.className = 'sky-bubble';
+      const size = 10 + Math.random()*26;
+      b.style.width = size+'px'; b.style.height = size+'px';
+      b.style.left = Math.random()*100+'vw';
+      b.style.bottom = (-10 - Math.random()*40)+'px';
+      b.style.setProperty('--drift', (Math.random()*40-20)+'px');
+      b.style.animationDuration = (10+Math.random()*14)+'s';
+      b.style.animationDelay = (Math.random()*14)+'s';
+      wrap.appendChild(b);
+    }
+  }
+
+  /* ======================= settings sheet ======================= */
+  function openSheet(){
+    buildGoalPicks(goalPicks, state.goalMl);
+    customGoal.value = '';
+    switchReminders.classList.toggle('on', !!state.remindersOn);
+    backdrop.classList.add('show');
+    sheet.classList.add('show');
+  }
+  function closeSheet(){ backdrop.classList.remove('show'); sheet.classList.remove('show'); }
+  goalChip.addEventListener('click', openSheet);
+  backdrop.addEventListener('click', closeSheet);
+  sheetClose.addEventListener('click', closeSheet);
+
+  sheetSave.addEventListener('click', ()=>{
+    let ml = parseInt(customGoal.value, 10);
+    if(!ml || ml < 250) ml = parseInt(goalPicks.dataset.chosen, 10);
+    if(ml && ml >= 250){
+      state.goalMl = ml;
+      state.celebrated = state.totalMl >= state.goalMl;
+      save();
+      render(displayedMl);
+      updateChips();
+      showToast('Goal updated to ' + (ml/1000).toFixed(1) + 'L');
+    }
+    closeSheet();
+  });
+
+  resetRow.addEventListener('click', ()=>{
+    if(confirm("Reset today's total back to 0?")){
+      state.totalMl = 0; state.celebrated = false; save();
+      animateTo(0);
+      closeSheet();
+    }
+  });
+
+  switchReminders.addEventListener('click', async ()=>{
+    if(!state.remindersOn){
+      const ok = await enableReminders();
+      switchReminders.classList.toggle('on', ok);
+    } else {
+      state.remindersOn = false; save(); updateChips();
+      switchReminders.classList.remove('on');
+    }
+  });
+  notifChip.addEventListener('click', async ()=>{
+    if(!state.remindersOn){ await enableReminders(); }
+    else{ state.remindersOn=false; save(); updateChips(); showToast('Reminders turned off'); }
+  });
+
+  async function enableReminders(){
+    if(!('Notification' in window)){
+      showToast("This browser doesn't support notifications — a toast will still remind you here.");
+      state.remindersOn = true; state.lastNotifiedTs = Date.now(); save(); updateChips();
+      return true;
+    }
+    if(Notification.permission === 'denied'){
+      showToast('Notifications are blocked — enable them in your browser/site settings.');
+      return false;
+    }
+    const perm = await Notification.requestPermission();
+    if(perm === 'granted'){
+      state.remindersOn = true; state.lastNotifiedTs = Date.now(); save(); updateChips();
+      showToast("Hourly reminders on — keep this tab open (or add Drip to your home screen) 💧");
+      return true;
+    }
+    showToast('Reminders need notification permission to work.');
+    return false;
+  }
+
+  /* ======================= reminder loop ======================= */
+  function checkReminder(){
+    if(!state.remindersOn) return;
+    const now = Date.now();
+    const since = Math.max(state.lastDrinkTs, state.lastNotifiedTs);
+    if(now - since >= 60*60*1000){
+      fireReminder();
+      state.lastNotifiedTs = now;
+      save();
+    }
+  }
+  const REMINDER_LINES = [
+    "It's been an hour — time for a sip! 💧",
+    "Your mascot is getting thirsty. Grab some water!",
+    "Hourly splash check: have some water! 🌊",
+    "Stay fresh — drink some water now."
+  ];
+  function fireReminder(){
+    const msg = REMINDER_LINES[Math.floor(Math.random()*REMINDER_LINES.length)];
+    if('Notification' in window && Notification.permission === 'granted'){
+      try{ new Notification('💧 Drip reminder', { body: msg, tag:'drip-reminder' }); }catch(e){}
+    }
+    showToast(msg);
+    if(navigator.vibrate) navigator.vibrate([80,40,80]);
+  }
+  setInterval(checkReminder, 60*1000);
+  checkReminder();
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState === 'visible') checkReminder();
+  });
+
+  /* ======================= day-start modal ======================= */
+  function greetingForHour(h){
+    if(h < 5) return 'Up late?';
+    if(h < 12) return 'Good morning!';
+    if(h < 17) return 'Good afternoon!';
+    return 'Good evening!';
+  }
+  function openDayModal(){
+    dayGreet.textContent = greetingForHour(new Date().getHours()) + ' ' + mascot.name.split(' ')[0] + ' is here!';
+    daySub.textContent = "Meet your daily companion — keep them colorful by staying hydrated. What's your water goal? You can change it anytime in settings.";
+    buildGoalPicks(dayGoalPicks, state.goalMl);
+    dayCustomGoal.value = '';
+    dayModal.classList.add('show');
+  }
+  dayStart.addEventListener('click', ()=>{
+    let ml = parseInt(dayCustomGoal.value, 10);
+    if(!ml || ml < 250) ml = parseInt(dayGoalPicks.dataset.chosen, 10) || 2000;
+    state.goalMl = ml;
+    state.onboarded = true;
+    save();
+    dayModal.classList.remove('show');
+    updateChips();
+    render(displayedMl);
+  });
+
+  /* ======================= init ======================= */
+  makeSkyBubbles();
+  updateChips();
+  displayedMl = 0;
+  render(0);
+  save();
+  requestAnimationFrame(()=> animateTo(state.totalMl));
+
+  if(!state.onboarded){
+    setTimeout(openDayModal, 350);
+  } else if(isNewDay && hadPriorState){
+    setTimeout(()=> showToast('Say hi to ' + mascot.name + ' today! 👋'), 900);
+  }
+
+  window.addEventListener('resize', ()=> render(displayedMl));
+
+})();
+</script>
+</body>
+</html>
